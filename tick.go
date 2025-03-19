@@ -40,6 +40,16 @@ func (s *Service) tickQ() {
 
 		v := v
 
+		LT := 10 * time.Minute
+		_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:tickQ:lock:%s", s.caller, v), LT, nil)
+		if err != nil {
+			if errors.Is(err, redislock.ErrNotObtained) {
+				return
+			}
+			//lg.Errorf("obtain lock failed, 不执行, err: %s", err)
+			return
+		}
+
 		go s.handleEvent(ctx, v)
 
 	}
@@ -164,7 +174,7 @@ func (s *Service) runEvent(ctx context.Context, eventS string) error {
 	}
 
 	LT := 10 * time.Minute
-	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:lock:%s", s.caller, eventS), LT, nil)
+	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:runEvent:lock:%s", s.caller, eventS), LT, nil)
 	if err != nil {
 		if errors.Is(err, redislock.ErrNotObtained) {
 			lg.Infof("未获取到锁, 判断为重复执行")
