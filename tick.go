@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/afret0/wheel/tool"
 	"github.com/bsm/redislock"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"strings"
-	"time"
 )
 
 func (s *Service) startTick() {
@@ -27,7 +29,7 @@ func (s *Service) startTick() {
 
 func (s *Service) tickQ() {
 	now := time.Now().Unix()
-	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now)}).Result()
+	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: 20}).Result()
 	if err != nil {
 		logger.Errorf("get event failed: %v", err)
 		return
@@ -41,7 +43,7 @@ func (s *Service) tickQ() {
 		v := v
 
 		LT := 10 * time.Minute
-		_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:tickQ:lock:%s", s.caller, v), LT, nil)
+		_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:tickQ:lock:%s", s.caller, tool.MD5(v)), LT, nil)
 		if err != nil {
 			if errors.Is(err, redislock.ErrNotObtained) {
 				return
@@ -174,7 +176,7 @@ func (s *Service) runEvent(ctx context.Context, eventS string) error {
 	}
 
 	LT := 10 * time.Minute
-	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:runEvent:lock:%s", s.caller, eventS), LT, nil)
+	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:runEvent:lock:%s", s.caller, tool.MD5(eventS)), LT, nil)
 	if err != nil {
 		if errors.Is(err, redislock.ErrNotObtained) {
 			lg.Infof("未获取到锁, 判断为重复执行")
