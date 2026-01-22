@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,8 +29,18 @@ func (s *Service) startTick() {
 }
 
 func (s *Service) tickQ() {
+	lg := GetLogger()
+
+	count := int64(50)
+	envCountS := os.Getenv("DELAYTASK_TICK_COUNT")
+	envCount := tool.ConStringToInt64WithoutErr(envCountS)
+	if envCount != 0 {
+		count = envCount
+	}
+	lg.Infof("count: %d, envCountS: %s, envCount: %d", count, envCountS, envCount)
+
 	now := time.Now().Unix()
-	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: 20}).Result()
+	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: count}).Result()
 	if err != nil {
 		logger.Errorf("get event failed: %v", err)
 		return
