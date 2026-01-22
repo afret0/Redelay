@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -29,18 +28,9 @@ func (s *Service) startTick() {
 }
 
 func (s *Service) tickQ() {
-	lg := GetLogger()
-
-	count := int64(50)
-	envCountS := os.Getenv("DELAYTASK_TICK_COUNT")
-	envCount := tool.ConStringToInt64WithoutErr(envCountS)
-	if envCount != 0 {
-		count = envCount
-	}
-	lg.Infof("count: %d, envCountS: %s, envCount: %d", count, envCountS, envCount)
 
 	now := time.Now().Unix()
-	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: count}).Result()
+	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: s.tickQCount}).Result()
 	if err != nil {
 		logger.Errorf("get event failed: %v", err)
 		return
@@ -69,7 +59,7 @@ func (s *Service) tickQ() {
 }
 
 func (s *Service) tickUnAckQ() {
-	eventL, err := s.redis.ZRangeByScore(context.Background(), s.UnAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-3*time.Minute).Unix())}).Result()
+	eventL, err := s.redis.ZRangeByScore(context.Background(), s.unAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-3*time.Minute).Unix())}).Result()
 	//eventL, err := s.redis.ZRangeByScore(context.Background(), s.UnAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-10*time.Second).Unix())}).Result()
 	if err != nil {
 		logger.Errorf("get event failed: %v", err)
@@ -90,7 +80,7 @@ func (s *Service) tickUnAckQ() {
 		}
 		if e.UnAckRetryCount >= 3 {
 			logger.Errorf("event: %s retry 3 times, discard", e.Id)
-			s.redis.ZRem(ctx, s.UnAckKey, v)
+			s.redis.ZRem(ctx, s.unAckKey, v)
 			continue
 		}
 
@@ -102,7 +92,7 @@ func (s *Service) tickUnAckQ() {
 		}
 
 		p := s.redis.Pipeline()
-		p.ZRem(ctx, s.UnAckKey, v)
+		p.ZRem(ctx, s.unAckKey, v)
 		p.ZAdd(ctx, s.key, redis.Z{Score: float64(time.Now().Unix()), Member: string(eB)})
 		_, err = p.Exec(ctx)
 		if err != nil {
@@ -117,7 +107,7 @@ func (s *Service) handleEvent(ctx context.Context, eventS string) {
 	pipe := s.redis.Pipeline()
 
 	pipe.ZRem(ctx, s.key, eventS)
-	pipe.ZAdd(ctx, s.UnAckKey, redis.Z{Score: float64(time.Now().Unix()), Member: eventS})
+	pipe.ZAdd(ctx, s.unAckKey, redis.Z{Score: float64(time.Now().Unix()), Member: eventS})
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		lg.Errorf("handle event failed: %v", err)
@@ -134,7 +124,7 @@ func (s *Service) handleEvent(ctx context.Context, eventS string) {
 				return
 			}
 			if e.RetryCount >= 3 {
-				s.redis.ZRem(ctx, s.UnAckKey, eventS)
+				s.redis.ZRem(ctx, s.unAckKey, eventS)
 				lg.Errorf("event: %s retry 3 times, discard", e.Id)
 				return
 			}
@@ -152,7 +142,7 @@ func (s *Service) handleEvent(ctx context.Context, eventS string) {
 
 	pipe1 := s.redis.Pipeline()
 	pipe1.ZRem(ctx, s.key, eventS)
-	pipe1.ZRem(ctx, s.UnAckKey, eventS)
+	pipe1.ZRem(ctx, s.unAckKey, eventS)
 	_, err = pipe1.Exec(ctx)
 	if err != nil {
 		lg.Errorf("handle event failed: %v", err)

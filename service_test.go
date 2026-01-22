@@ -2,9 +2,10 @@ package delayTask
 
 import (
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func EF(args string) error {
@@ -19,9 +20,9 @@ func TestService(t *testing.T) {
 	//ctx := context.Background()
 
 	RC := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:    []string{"120.27.235.209:6379"},
-		Password: "Qiyiguo2303",
-		Username: "default",
+		Addrs:    []string{"r-bp1kvud328x48r9xp6pd.redis.rds.aliyuncs.com:6379"},
+		Password: "Qiyiguo0621",
+		Username: "kiwi0621",
 	})
 
 	//InitService("test", RC)

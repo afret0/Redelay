@@ -2,23 +2,27 @@ package delayTask
 
 import (
 	"fmt"
+	"os"
+	"sync"
+
+	"github.com/afret0/wheel/tool"
 	"github.com/bsm/redislock"
 	"github.com/redis/go-redis/v9"
-	"sync"
 )
 
 var RetryErr = fmt.Errorf("retry")
 
 type Service struct {
-	redis    redis.UniversalClient
-	caller   string
-	slot     map[string]func(p string) error
-	mx       sync.RWMutex
-	key      string
-	UnAckKey string
-	init     bool
-	lock     *redislock.Client
-	debug    bool
+	redis      redis.UniversalClient
+	caller     string
+	slot       map[string]func(p string) error
+	mx         sync.RWMutex
+	key        string
+	unAckKey   string
+	init       bool
+	lock       *redislock.Client
+	debug      bool
+	tickQCount int64
 }
 
 type event struct {
@@ -34,15 +38,26 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 		panic("caller is required")
 	}
 
+	lg := GetLogger()
+
+	count := int64(50)
+	envCountS := os.Getenv("DELAYTASK_TICK_COUNT")
+	envCount := tool.ConStringToInt64WithoutErr(envCountS)
+	if envCount != 0 {
+		count = envCount
+	}
+	lg.Infof("count: %d, envCountS: %s, envCount: %d", count, envCountS, envCount)
+
 	svr := &Service{
-		redis:    redis,
-		caller:   caller,
-		slot:     make(map[string]func(p string) error),
-		mx:       sync.RWMutex{},
-		key:      fmt.Sprintf("%s:delayTask", caller),
-		UnAckKey: fmt.Sprintf("%s:delayTask:unAck", caller),
-		init:     true,
-		lock:     redislock.New(redis),
+		redis:      redis,
+		caller:     caller,
+		slot:       make(map[string]func(p string) error),
+		mx:         sync.RWMutex{},
+		key:        fmt.Sprintf("%s:delayTask", caller),
+		unAckKey:   fmt.Sprintf("%s:delayTask:unAck", caller),
+		init:       true,
+		lock:       redislock.New(redis),
+		tickQCount: count,
 	}
 
 	go svr.startTick()
