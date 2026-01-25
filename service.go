@@ -13,16 +13,18 @@ import (
 var RetryErr = fmt.Errorf("retry")
 
 type Service struct {
-	redis      redis.UniversalClient
-	caller     string
-	slot       map[string]func(p string) error
-	mx         sync.RWMutex
-	key        string
-	unAckKey   string
-	init       bool
-	lock       *redislock.Client
-	debug      bool
-	tickQCount int64
+	redis    redis.UniversalClient
+	caller   string
+	slot     map[string]func(p string) error
+	mx       sync.RWMutex
+	key      string
+	unAckKey string
+	init     bool
+	lock     *redislock.Client
+	debug    bool
+
+	tickQCount   int64
+	tickInterval int64
 }
 
 type event struct {
@@ -46,18 +48,28 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 	if envCount != 0 {
 		count = envCount
 	}
+
+	tickInterval := int64(300)
+	envTickIntervalS := os.Getenv("DELAYTASK_TICK_INTERVAL_MS")
+	envTickInterval := tool.ConStringToInt64WithoutErr(envTickIntervalS)
+	if envTickInterval != 0 {
+		tickInterval = envTickInterval
+	}
+
 	lg.Infof("count: %d, envCountS: %s, envCount: %d", count, envCountS, envCount)
 
 	svr := &Service{
-		redis:      redis,
-		caller:     caller,
-		slot:       make(map[string]func(p string) error),
-		mx:         sync.RWMutex{},
-		key:        fmt.Sprintf("%s:delayTask", caller),
-		unAckKey:   fmt.Sprintf("%s:delayTask:unAck", caller),
-		init:       true,
-		lock:       redislock.New(redis),
-		tickQCount: count,
+		redis:    redis,
+		caller:   caller,
+		slot:     make(map[string]func(p string) error),
+		mx:       sync.RWMutex{},
+		key:      fmt.Sprintf("%s:delayTask", caller),
+		unAckKey: fmt.Sprintf("%s:delayTask:unAck", caller),
+		init:     true,
+		lock:     redislock.New(redis),
+
+		tickQCount:   count,
+		tickInterval: tickInterval,
 	}
 
 	go svr.startTick()

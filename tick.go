@@ -18,7 +18,7 @@ func (s *Service) startTick() {
 	logger := GetLogger()
 	defer func() { logger.Infof("tick stop...") }()
 
-	for range time.Tick(1 * time.Second) {
+	for range time.Tick(time.Duration(s.tickInterval) * time.Millisecond) {
 		if s.debug {
 			logger.Infof("tick..")
 		}
