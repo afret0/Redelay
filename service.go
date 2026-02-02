@@ -86,6 +86,7 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 	if err != nil {
 		panic(err)
 	}
+	defer antsPool.Release()
 
 	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
 
