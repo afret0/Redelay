@@ -5,8 +5,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
+
+func prometheusHandler() gin.HandlerFunc {
+	h := promhttp.Handler()
+	return func(c *gin.Context) {
+		h.ServeHTTP(c.Writer, c.Request)
+	}
+}
+
+func RegisterPrometheusRouter(E *gin.Engine) {
+	E.GET("/metrics", prometheusHandler())
+}
 
 func EF(args string) error {
 	lg.Infof("args: %v", args)
@@ -25,6 +38,12 @@ func TestService(t *testing.T) {
 		Username: "kiwi0621",
 	})
 
+	go func() {
+		e := gin.Default()
+		RegisterPrometheusRouter(e)
+		e.Run(":8080")
+	}()
+
 	//InitService("test", RC)
 
 	svr1 := NewService("test", RC)
@@ -32,6 +51,7 @@ func TestService(t *testing.T) {
 		event := fmt.Sprintf("test:event:%d", i)
 		svr1.RegisterEventFunc(event, EF)
 
+		time.Sleep(3 * time.Second)
 		err := svr1.RegisterEvent(event, fmt.Sprintf("%d", i), int64(2))
 		if err != nil {
 			t.Error(err)

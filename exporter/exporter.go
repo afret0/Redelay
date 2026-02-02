@@ -89,14 +89,3 @@ func (e *Exporter) Gauge(name string, helpChain ...string) prometheus.Gauge {
 
 	return G
 }
-
-//func (e *Exporter) prometheusHandler() gin.HandlerFunc {
-//	h := promhttp.Handler()
-//	return func(c *gin.Context) {
-//		h.ServeHTTP(c.Writer, c.Request)
-//	}
-//}
-//
-//func (e *Exporter) RegisterPrometheusRouter(E *gin.Engine) {
-//	E.GET("/metrics", e.prometheusHandler())
-//}
