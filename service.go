@@ -131,7 +131,7 @@ func (s *Service) Debug() bool {
 
 func (s *Service) loopFlushExp() {
 
-	lg.Infof("start flush exp")
+	lg.Infof("flush exp start...")
 	s.exp.Gauge("loop_flush_exp_ping").Set(1)
 
 	defer func() {
