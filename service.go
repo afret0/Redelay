@@ -9,6 +9,7 @@ import (
 	"github.com/afret0/delayTask/exporter"
 	"github.com/afret0/wheel/tool"
 	"github.com/bsm/redislock"
+	"github.com/panjf2000/ants/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -36,6 +37,8 @@ type Service struct {
 	consumeLimit int64
 
 	exp *exporter.Exporter
+
+	antsPool *ants.Pool
 }
 
 type event struct {
@@ -72,7 +75,19 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 		consumeLimit = envConsumeLimit
 	}
 
-	lg.Infof("count: %d, envCountS: %s, envCount: %d, consumeLimit: %d", count, envCountS, envCount, consumeLimit)
+	antsPoolSize := 500
+	envAntsPoolSizeS := os.Getenv("DELAYTASK_ANTS_POOL_SIZE")
+	envAntsPoolSize := tool.ConStringToInt64WithoutErr(envAntsPoolSizeS)
+	if envAntsPoolSize != 0 {
+		antsPoolSize = int(envAntsPoolSize)
+	}
+
+	antsPool, err := ants.NewPool(antsPoolSize)
+	if err != nil {
+		panic(err)
+	}
+
+	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
 
 	svr := &Service{
 		redis:  redis,
@@ -93,11 +108,14 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 		consumeLimit: consumeLimit,
 
 		exp: exporter.New(caller),
+
+		antsPool: antsPool,
 	}
 
 	svr.exp.Gauge("tick_count").Set(float64(svr.tickQCount))
 	svr.exp.Gauge("tick_interval_ms").Set(float64(svr.tickInterval))
 	svr.exp.Gauge("consume_limit").Set(float64(svr.consumeLimit))
+	svr.exp.Gauge("ants_pool_size").Set(float64(antsPoolSize))
 
 	go svr.startTick()
 	go svr.startConsume()
@@ -113,8 +131,13 @@ func (s *Service) Debug() bool {
 
 func (s *Service) loopFlushExp() {
 
+	lg.Infof("start flush exp")
 	s.exp.Gauge("loop_flush_exp_ping").Set(1)
-	defer s.exp.Gauge("loop_flush_exp_ping").Set(0)
+
+	defer func() {
+		s.exp.Gauge("loop_flush_exp_ping").Set(0)
+		lg.Infof("loopFlushExp stop...")
+	}()
 
 	ctx := tool.NewCtxBK()
 
@@ -127,5 +150,13 @@ func (s *Service) loopFlushExp() {
 
 		ackQlen, _ := s.redis.ZCard(ctx, s.key).Uint64()
 		s.exp.Gauge("ack_queue_length").Set(float64(ackQlen))
+
+		redisPing, err := s.redis.Ping(ctx).Result()
+		if err != nil {
+			s.exp.Gauge("redis_ping").Set(0)
+		}
+		if redisPing == "PONG" {
+			s.exp.Gauge("redis_ping").Set(1)
+		}
 	}
 }

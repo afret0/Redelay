@@ -40,7 +40,7 @@ func (s *Service) Publish(name string, args string, delay int64) error {
 		return err
 	}
 
-	score := int64(time.Now().Unix()) + delay
+	score := time.Now().Unix() + delay
 	err = s.redis.ZAdd(ctx, s.key, redis.Z{Score: float64(score), Member: string(EB)}).Err()
 	if err != nil {
 		lg.WithError(err).Error("register event failed")

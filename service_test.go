@@ -32,7 +32,7 @@ func TestService(t *testing.T) {
 		event := fmt.Sprintf("test:event:%d", i)
 		svr1.RegisterEventFunc(event, EF)
 
-		err := svr1.RegisterEvent(event, fmt.Sprintf("%d", i), int64(i))
+		err := svr1.RegisterEvent(event, fmt.Sprintf("%d", i), int64(2))
 		if err != nil {
 			t.Error(err)
 		}
