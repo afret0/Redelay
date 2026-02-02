@@ -9,11 +9,11 @@ import (
 )
 
 func EF(args string) error {
-	fmt.Printf("args: %v\n", args)
+	lg.Infof("args: %v", args)
 	//panic("lsakdjlfkajlsd")
-	time.Sleep(10 * time.Minute)
+	//time.Sleep(10 * time.Minute)
 	//return nil
-	return RetryErr
+	return nil
 }
 
 func TestService(t *testing.T) {
@@ -28,11 +28,11 @@ func TestService(t *testing.T) {
 	//InitService("test", RC)
 
 	svr1 := NewService("test", RC)
-	for i := 11; i <= 21; i++ {
+	for i := 0; i <= 100; i++ {
 		event := fmt.Sprintf("test:event:%d", i)
 		svr1.RegisterEventFunc(event, EF)
 
-		err := svr1.RegisterEvent(event, "arg1", int64(i))
+		err := svr1.RegisterEvent(event, fmt.Sprintf("%d", i), int64(i))
 		if err != nil {
 			t.Error(err)
 		}

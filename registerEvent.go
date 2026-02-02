@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
-func (s *Service) RegisterEvent(name string, args string, delay int64) error {
+func (s *Service) Publish(name string, args string, delay int64) error {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, "opId", strings.ReplaceAll(uuid.New().String(), "-", ""))
+
+	s.exp.Counter("publish_total").Inc()
 
 	lg := CtxLogger(ctx).WithField("name", name)
 
@@ -45,6 +48,11 @@ func (s *Service) RegisterEvent(name string, args string, delay int64) error {
 	}
 
 	return nil
+}
+
+// RegisterEvent Deprecated : use Publish instead
+func (s *Service) RegisterEvent(name string, args string, delay int64) error {
+	return s.Publish(name, args, delay)
 }
 
 func (s *Service) RegisterEventFunc(name string, f func(p string) error) {

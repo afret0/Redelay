@@ -9,27 +9,34 @@ import (
 	"time"
 
 	"github.com/afret0/wheel/tool"
+	"github.com/afret0/wheel/tool/timeTool"
 	"github.com/bsm/redislock"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/time/rate"
 )
 
 func (s *Service) startTick() {
-	logger := GetLogger()
-	defer func() { logger.Infof("tick stop...") }()
+	s.exp.Gauge("tick_ping").Set(1)
+	defer func() {
+		s.exp.Gauge("tick_ping").Set(0)
+		lg.Infof("tick stop...")
+	}()
 
 	for range time.Tick(time.Duration(s.tickInterval) * time.Millisecond) {
-		if s.debug {
-			logger.Infof("tick..")
+		if s.Debug() {
+			lg.Infof("tick...")
 		}
+
 		go s.tickQ()
 		go s.tickUnAckQ()
 	}
+
 }
 
 func (s *Service) tickQ() {
 
-	now := time.Now().Unix()
+	now := timeTool.Now().Unix()
 	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: s.tickQCount}).Result()
 	if err != nil {
 		logger.Errorf("get event failed: %v", err)
@@ -38,8 +45,9 @@ func (s *Service) tickQ() {
 
 	for _, v := range eventL {
 		ctx := context.Background()
-		ctx = context.WithValue(ctx, "opId", strings.ReplaceAll(uuid.New().String(), "-", ""))
-		//lg := CtxLogger(ctx)
+		ctx = context.WithValue(ctx, "opId", tool.UUIDWithoutHyphen())
+
+		s.exp.Counter("tickQ_tick_total").Inc()
 
 		v := v
 
@@ -53,13 +61,25 @@ func (s *Service) tickQ() {
 			return
 		}
 
-		go s.handleEvent(ctx, v)
+		pipe := s.redis.Pipeline()
+
+		pipe.RPush(ctx, s.bufferQueue, v)
+		pipe.ZRem(ctx, s.key, v)
+		pipe.ZAdd(ctx, s.unAckKey, redis.Z{Score: float64(time.Now().Unix()), Member: v})
+		_, err := pipe.Exec(ctx)
+		if err != nil {
+			lg.Errorf("handle event failed: %v", err)
+			return
+		}
+
+		//go s.handleEvent(ctx, v)
 
 	}
 }
 
 func (s *Service) tickUnAckQ() {
-	eventL, err := s.redis.ZRangeByScore(context.Background(), s.unAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-3*time.Minute).Unix())}).Result()
+
+	eventL, err := s.redis.ZRangeByScore(context.Background(), s.unAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-3*time.Minute).Unix()), Count: s.tickQCount}).Result()
 	//eventL, err := s.redis.ZRangeByScore(context.Background(), s.UnAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-10*time.Second).Unix())}).Result()
 	if err != nil {
 		logger.Errorf("get event failed: %v", err)
@@ -69,6 +89,8 @@ func (s *Service) tickUnAckQ() {
 	for _, v := range eventL {
 		ctx := context.Background()
 		ctx = context.WithValue(ctx, "opId", strings.ReplaceAll(uuid.New().String(), "-", ""))
+
+		s.exp.Counter("tickUnAckQ_tick_total").Inc()
 
 		v := v
 
@@ -102,19 +124,41 @@ func (s *Service) tickUnAckQ() {
 	}
 }
 
-func (s *Service) handleEvent(ctx context.Context, eventS string) {
-	lg := CtxLogger(ctx).WithField("event", eventS)
-	pipe := s.redis.Pipeline()
+func (s *Service) startConsume() {
+	s.exp.Gauge("consume_ping").Set(1)
+	defer func() {
+		s.exp.Gauge("consume_ping").Set(0)
+		lg.Infof("consume stop...")
+	}()
 
-	pipe.ZRem(ctx, s.key, eventS)
-	pipe.ZAdd(ctx, s.unAckKey, redis.Z{Score: float64(time.Now().Unix()), Member: eventS})
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		lg.Errorf("handle event failed: %v", err)
-		return
+	lg.Infof("consume start...")
+	ctx := tool.NewCtxBK()
+
+	limiter := rate.NewLimiter(rate.Limit(s.consumeLimit), int(s.consumeLimit*2))
+
+	for {
+		eventSL, err := s.redis.BLPop(ctx, 0, s.bufferQueue).Result()
+		if err != nil {
+			lg.Errorf("get event failed: %s", err)
+			continue
+		}
+
+		if err := limiter.Wait(ctx); err != nil {
+			lg.Errorf("rate limit wait failed: %s", err)
+			continue
+		}
+
+		s.exp.Counter("consume_total").Inc()
+
+		go s.handleEvent(ctx, eventSL[1])
+
 	}
 
-	err = s.runEvent(ctx, eventS)
+}
+
+func (s *Service) handleEvent(ctx context.Context, eventS string) {
+
+	err := s.runEvent(ctx, eventS)
 	if err != nil {
 		if errors.Is(err, RetryErr) {
 			e := new(event)
@@ -141,7 +185,7 @@ func (s *Service) handleEvent(ctx context.Context, eventS string) {
 	}
 
 	pipe1 := s.redis.Pipeline()
-	pipe1.ZRem(ctx, s.key, eventS)
+	//pipe1.ZRem(ctx, s.key, eventS)
 	pipe1.ZRem(ctx, s.unAckKey, eventS)
 	_, err = pipe1.Exec(ctx)
 	if err != nil {
@@ -156,8 +200,9 @@ func (s *Service) runEvent(ctx context.Context, eventS string) error {
 			logger.Errorf("run event panic: %v", err)
 		}
 	}()
-	lg := CtxLogger(ctx).WithField("event", eventS)
-	lg.Infof("event run...")
+	if s.Debug() {
+		lg.Infof("event run, eventS: %s", eventS)
+	}
 
 	E := new(event)
 	err := json.Unmarshal([]byte(eventS), E)
@@ -194,6 +239,8 @@ func (s *Service) runEvent(ctx context.Context, eventS string) error {
 		return err
 	}
 
-	lg.Infof("event end...")
+	if s.Debug() {
+		lg.Infof("event end, eventS: %s", eventS)
+	}
 	return nil
 }
