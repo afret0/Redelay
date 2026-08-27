@@ -1,7 +1,7 @@
-tag = v1.5.71
+tag = v0.0.1
 
 build:
-	git commit -am "f" && git push || true
+	git commit -am "tag $(tag)" && git push || true
 	git tag $(tag)
 	git push origin $(tag)
 
