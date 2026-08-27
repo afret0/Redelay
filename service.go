@@ -9,7 +9,6 @@ import (
 	"github.com/afret0/delayTask/exporter"
 	"github.com/afret0/wheel/tool"
 	"github.com/bsm/redislock"
-	"github.com/panjf2000/ants/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -75,20 +74,21 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 		consumeLimit = envConsumeLimit
 	}
 
-	antsPoolSize := 500
-	envAntsPoolSizeS := os.Getenv("DELAYTASK_ANTS_POOL_SIZE")
-	envAntsPoolSize := tool.ConStringToInt64WithoutErr(envAntsPoolSizeS)
-	if envAntsPoolSize != 0 {
-		antsPoolSize = int(envAntsPoolSize)
-	}
+	//antsPoolSize := 500
+	//envAntsPoolSizeS := os.Getenv("DELAYTASK_ANTS_POOL_SIZE")
+	//envAntsPoolSize := tool.ConStringToInt64WithoutErr(envAntsPoolSizeS)
+	//if envAntsPoolSize != 0 {
+	//	antsPoolSize = int(envAntsPoolSize)
+	//}
+	//
+	//antsPool, err := ants.NewPool(antsPoolSize)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//defer antsPool.Release()
 
-	antsPool, err := ants.NewPool(antsPoolSize)
-	if err != nil {
-		panic(err)
-	}
-	defer antsPool.Release()
-
-	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
+	//lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
+	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
 
 	svr := &Service{
 		redis:  redis,
@@ -116,7 +116,7 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 	svr.exp.Gauge("tick_count").Set(float64(svr.tickQCount))
 	svr.exp.Gauge("tick_interval_ms").Set(float64(svr.tickInterval))
 	svr.exp.Gauge("consume_limit").Set(float64(svr.consumeLimit))
-	svr.exp.Gauge("ants_pool_size").Set(float64(antsPoolSize))
+	//svr.exp.Gauge("ants_pool_size").Set(float64(antsPoolSize))
 
 	go svr.startTick()
 	go svr.startConsume()
