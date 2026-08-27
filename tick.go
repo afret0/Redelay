@@ -29,19 +29,19 @@ func (s *Service) startTick() {
 			lg.Infof("tick...")
 		}
 
-		//go s.tickQ()
-		err := s.antsPool.Submit(s.tickQ)
-		if err != nil {
-			lg.Errorf("submit tickQ to ants pool failed: %v", err)
-			continue
-		}
+		go s.tickQ()
+		//err := s.antsPool.Submit(s.tickQ)
+		//if err != nil {
+		//	lg.Errorf("submit tickQ to ants pool failed: %v", err)
+		//	continue
+		//}
 
-		//go s.tickUnAckQ()
-		err = s.antsPool.Submit(s.tickUnAckQ)
-		if err != nil {
-			lg.Errorf("submit tickUnAckQ to ants pool failed: %v", err)
-			continue
-		}
+		go s.tickUnAckQ()
+		//err = s.antsPool.Submit(s.tickUnAckQ)
+		//if err != nil {
+		//	lg.Errorf("submit tickUnAckQ to ants pool failed: %v", err)
+		//	continue
+		//}
 
 	}
 
@@ -163,13 +163,13 @@ func (s *Service) startConsume() {
 
 		s.exp.Counter("consume_total").Inc()
 
-		//go s.handleEvent(ctx, eventSL[1])
-		err = s.antsPool.Submit(func() {
-			s.handleEvent(ctx, eventSL[1])
-		})
-		if err != nil {
-			lg.Errorf("submit handleEvent to ants pool failed: %v", err)
-		}
+		go s.handleEvent(ctx, eventSL[1])
+		//err = s.antsPool.Submit(func() {
+		//	s.handleEvent(ctx, eventSL[1])
+		//})
+		//if err != nil {
+		//	lg.Errorf("submit handleEvent to ants pool failed: %s", err)
+		//}
 
 	}
 

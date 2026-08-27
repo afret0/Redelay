@@ -38,7 +38,7 @@ type Service struct {
 
 	exp *exporter.Exporter
 
-	antsPool *ants.Pool
+	//antsPool *ants.Pool
 }
 
 type event struct {
@@ -110,7 +110,7 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 
 		exp: exporter.New(caller),
 
-		antsPool: antsPool,
+		//antsPool: antsPool,
 	}
 
 	svr.exp.Gauge("tick_count").Set(float64(svr.tickQCount))
