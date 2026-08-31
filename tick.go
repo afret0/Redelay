@@ -1,4 +1,4 @@
-package delayTask
+package Redelay
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func (s *Service) tickQ() {
 		v := v
 
 		LT := 10 * time.Minute
-		_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:tickQ:lock:%s", s.caller, tool.MD5(v)), LT, nil)
+		_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:Redelay:tickQ:lock:%s", s.svcName, tool.MD5(v)), LT, nil)
 		if err != nil {
 			if errors.Is(err, redislock.ErrNotObtained) {
 				return
@@ -241,7 +241,7 @@ func (s *Service) runEvent(ctx context.Context, eventS string) error {
 	}
 
 	LT := 10 * time.Minute
-	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:delayTask:runEvent:lock:%s", s.caller, tool.MD5(eventS)), LT, nil)
+	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:Redelay:runEvent:lock:%s", s.caller, tool.MD5(eventS)), LT, nil)
 	if err != nil {
 		if errors.Is(err, redislock.ErrNotObtained) {
 			lg.Infof("未获取到锁, 判断为重复执行")

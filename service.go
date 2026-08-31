@@ -1,12 +1,12 @@
-package delayTask
+package Redelay
 
 import (
+	"Redelay/exporter"
 	"fmt"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/afret0/delayTask/exporter"
 	"github.com/afret0/wheel/tool"
 	"github.com/bsm/redislock"
 	"github.com/redis/go-redis/v9"
@@ -18,16 +18,15 @@ var lg = GetLogger()
 //const ExporterBufferQueueLength = "buffer_queue_length"
 
 type Service struct {
-	redis  redis.UniversalClient
-	caller string
-	slot   map[string]func(p string) error
-	mx     sync.RWMutex
+	redis   redis.UniversalClient
+	svcName string
+	slot    map[string]func(p string) error
+	mx      sync.RWMutex
 
 	key         string
 	unAckKey    string
 	bufferQueue string
 
-	init bool
 	lock *redislock.Client
 
 	tickQCount   int64
@@ -48,9 +47,9 @@ type event struct {
 	UnAckRetryCount int64  `json:"unAckRetryCount"`
 }
 
-func NewService(caller string, redis redis.UniversalClient) *Service {
-	if caller == "" {
-		panic("caller is required")
+func NewService(svcName string, redis redis.UniversalClient) *Service {
+	if svcName == "" {
+		panic("svcName is required")
 	}
 
 	count := int64(500)
@@ -91,16 +90,15 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
 
 	svr := &Service{
-		redis:  redis,
-		caller: caller,
-		slot:   make(map[string]func(p string) error),
-		mx:     sync.RWMutex{},
+		redis:   redis,
+		svcName: svcName,
+		slot:    make(map[string]func(p string) error),
+		mx:      sync.RWMutex{},
 
-		key:         fmt.Sprintf("%s:delayTask", caller),
-		unAckKey:    fmt.Sprintf("%s:delayTask:unAck", caller),
-		bufferQueue: fmt.Sprintf("%s:delayTask:bufferQueue", caller),
+		key:         fmt.Sprintf("%s:Redelay", svcName),
+		unAckKey:    fmt.Sprintf("%s:Redelay:unAck", svcName),
+		bufferQueue: fmt.Sprintf("%s:Redelay:bufferQueue", svcName),
 
-		init: true,
 		lock: redislock.New(redis),
 
 		tickQCount:   count,
@@ -108,7 +106,7 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 
 		consumeLimit: consumeLimit,
 
-		exp: exporter.New(caller),
+		exp: exporter.New(svcName),
 
 		//antsPool: antsPool,
 	}
@@ -118,10 +116,10 @@ func NewService(caller string, redis redis.UniversalClient) *Service {
 	svr.exp.Gauge("consume_limit").Set(float64(svr.consumeLimit))
 	//svr.exp.Gauge("ants_pool_size").Set(float64(antsPoolSize))
 
-	go svr.startTick()
-	go svr.startConsume()
-
-	go svr.loopFlushExp()
+	//go svr.startTick()
+	//go svr.startConsume()
+	//
+	//go svr.loopFlushExp()
 
 	return svr
 }

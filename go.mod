@@ -1,9 +1,8 @@
 module Redelay
 
-go 1.25.5
+go 1.26.5
 
 require (
-	github.com/afret0/delayTask v1.5.71
 	github.com/afret0/wheel v1.1.904
 	github.com/bsm/redislock v0.10.0
 	github.com/gin-gonic/gin v1.12.0

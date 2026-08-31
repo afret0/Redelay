@@ -1,5 +1,3 @@
-github.com/afret0/delayTask v1.5.71 h1:OOok0FcH1snY6i2V7eX7kqKi8Hi4pfyiX5zELhaQ9nk=
-github.com/afret0/delayTask v1.5.71/go.mod h1:HZNiS3xNkY0T42YD+SxmTdDsI7HoNVYcOY4EN5Tc8/c=
 github.com/afret0/wheel v1.1.904 h1:w3kroweYKQ1RBj/61ZUgc6nkCBhW/dQot4/hnUwKiLI=
 github.com/afret0/wheel v1.1.904/go.mod h1:C4subxI497OqvGyVcVhiEmrgOYbcKhlFJtRbJnbBaj4=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
