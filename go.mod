@@ -3,7 +3,7 @@ module Redelay
 go 1.26.5
 
 require (
-	github.com/afret0/wheel v1.1.904
+	github.com/afret0/wheel v1.1.905
 	github.com/bsm/redislock v0.10.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0

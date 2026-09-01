@@ -16,7 +16,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func (s *Service) startTick() {
+func (s *Svc) startTick() {
 	lg.Infof("start tick")
 	s.exp.Gauge("tick_ping").Set(1)
 	defer func() {
@@ -47,7 +47,7 @@ func (s *Service) startTick() {
 
 }
 
-func (s *Service) tickQ() {
+func (s *Svc) tickQ() {
 
 	now := timeTool.Now().Unix()
 	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: s.tickQCount}).Result()
@@ -62,7 +62,7 @@ func (s *Service) tickQ() {
 
 		s.exp.Counter("tickQ_tick_total").Inc()
 
-		v := v
+		//v := v
 
 		LT := 10 * time.Minute
 		_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:Redelay:tickQ:lock:%s", s.svcName, tool.MD5(v)), LT, nil)
@@ -74,11 +74,19 @@ func (s *Service) tickQ() {
 			return
 		}
 
+		E := &event{}
+		err = tool.Unmarshal(v, E)
+		if err != nil {
+			lg.Errorf("unmarshal event: %s, failed: %s", v, err)
+			return
+		}
+
 		pipe := s.redis.Pipeline()
 
-		pipe.RPush(ctx, s.bufferQueue, v)
+		pipe.RPush(ctx, fmt.Sprintf("%s:%s", s.bufferQueue, E.Key), v)
 		pipe.ZRem(ctx, s.key, v)
-		pipe.ZAdd(ctx, s.unAckKey, redis.Z{Score: float64(time.Now().Unix()), Member: v})
+		pipe.ZAdd(ctx, fmt.Sprintf("%s:%s", s.unAckKey, E.Key), redis.Z{Score: float64(time.Now().Unix()), Member: v})
+
 		_, err := pipe.Exec(ctx)
 		if err != nil {
 			lg.Errorf("handle event failed: %v", err)
@@ -90,7 +98,7 @@ func (s *Service) tickQ() {
 	}
 }
 
-func (s *Service) tickUnAckQ() {
+func (s *Svc) tickUnAckQ() {
 
 	eventL, err := s.redis.ZRangeByScore(context.Background(), s.unAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-3*time.Minute).Unix()), Count: s.tickQCount}).Result()
 	//eventL, err := s.redis.ZRangeByScore(context.Background(), s.UnAckKey, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", time.Now().Add(-10*time.Second).Unix())}).Result()
@@ -105,7 +113,7 @@ func (s *Service) tickUnAckQ() {
 
 		s.exp.Counter("tickUnAckQ_tick_total").Inc()
 
-		v := v
+		//v := v
 
 		e := new(event)
 		err := json.Unmarshal([]byte(v), e)
@@ -137,7 +145,7 @@ func (s *Service) tickUnAckQ() {
 	}
 }
 
-func (s *Service) startConsume() {
+func (s *Svc) startConsume() {
 	s.exp.Gauge("consume_ping").Set(1)
 	defer func() {
 		s.exp.Gauge("consume_ping").Set(0)
@@ -175,7 +183,7 @@ func (s *Service) startConsume() {
 
 }
 
-func (s *Service) handleEvent(ctx context.Context, eventS string) {
+func (s *Svc) handleEvent(ctx context.Context, eventS string) {
 
 	err := s.runEvent(ctx, eventS)
 	if err != nil {
@@ -213,7 +221,7 @@ func (s *Service) handleEvent(ctx context.Context, eventS string) {
 	}
 }
 
-func (s *Service) runEvent(ctx context.Context, eventS string) error {
+func (s *Svc) runEvent(ctx context.Context, eventS string) error {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Errorf("run event panic: %v", err)
@@ -230,18 +238,18 @@ func (s *Service) runEvent(ctx context.Context, eventS string) error {
 		return err
 	}
 
-	s.mx.RLock()
-	f, ok := s.slot[E.Name]
-	s.mx.RUnlock()
-
-	if !ok {
-		err := fmt.Errorf("event: %s func is unregister", E.Name)
-		lg.Error(err)
-		return err
-	}
+	//s.mx.RLock()
+	//f, ok := s.slot[E.Name]
+	//s.mx.RUnlock()
+	//
+	//if !ok {
+	//	err := fmt.Errorf("event: %s func is unregister", E.Key)
+	//	lg.Error(err)
+	//	return err
+	//}
 
 	LT := 10 * time.Minute
-	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:Redelay:runEvent:lock:%s", s.caller, tool.MD5(eventS)), LT, nil)
+	_, err = s.lock.Obtain(ctx, fmt.Sprintf("%s:Redelay:runEvent:lock:%s", s.svcName, tool.MD5(eventS)), LT, nil)
 	if err != nil {
 		if errors.Is(err, redislock.ErrNotObtained) {
 			lg.Infof("未获取到锁, 判断为重复执行")

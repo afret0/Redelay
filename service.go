@@ -4,7 +4,6 @@ import (
 	"Redelay/exporter"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/afret0/wheel/tool"
@@ -17,11 +16,11 @@ var lg = GetLogger()
 
 //const ExporterBufferQueueLength = "buffer_queue_length"
 
-type Service struct {
+type Svc struct {
 	redis   redis.UniversalClient
 	svcName string
-	slot    map[string]func(p string) error
-	mx      sync.RWMutex
+	//slot    map[string]func(p string) error
+	//mx      sync.RWMutex
 
 	key         string
 	unAckKey    string
@@ -41,13 +40,13 @@ type Service struct {
 
 type event struct {
 	Id              string `json:"id"`
-	Name            string `json:"name"`
+	Key             string `json:"key"`
 	Args            string `json:"args"`
 	RetryCount      int64  `json:"retryCount"`
 	UnAckRetryCount int64  `json:"unAckRetryCount"`
 }
 
-func NewService(svcName string, redis redis.UniversalClient) *Service {
+func NewService(svcName string, redis redis.UniversalClient) *Svc {
 	if svcName == "" {
 		panic("svcName is required")
 	}
@@ -89,11 +88,11 @@ func NewService(svcName string, redis redis.UniversalClient) *Service {
 	//lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
 	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
 
-	svr := &Service{
+	svr := &Svc{
 		redis:   redis,
 		svcName: svcName,
-		slot:    make(map[string]func(p string) error),
-		mx:      sync.RWMutex{},
+		//slot:    make(map[string]func(p string) error),
+		//mx:      sync.RWMutex{},
 
 		key:         fmt.Sprintf("%s:Redelay", svcName),
 		unAckKey:    fmt.Sprintf("%s:Redelay:unAck", svcName),
@@ -124,11 +123,11 @@ func NewService(svcName string, redis redis.UniversalClient) *Service {
 	return svr
 }
 
-func (s *Service) Debug() bool {
+func (s *Svc) Debug() bool {
 	return tool.EnvEnabled("DELAYTASK_DEBUG")
 }
 
-func (s *Service) loopFlushExp() {
+func (s *Svc) loopFlushExp() {
 
 	lg.Infof("flush exp start...")
 	s.exp.Gauge("loop_flush_exp_ping").Set(1)

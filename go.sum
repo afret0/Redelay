@@ -1,5 +1,7 @@
 github.com/afret0/wheel v1.1.904 h1:w3kroweYKQ1RBj/61ZUgc6nkCBhW/dQot4/hnUwKiLI=
 github.com/afret0/wheel v1.1.904/go.mod h1:C4subxI497OqvGyVcVhiEmrgOYbcKhlFJtRbJnbBaj4=
+github.com/afret0/wheel v1.1.905 h1:Ifb7KmLqmJZd7iyZ7E8/LsA/jG6V8gglUYh+BQ44k0o=
+github.com/afret0/wheel v1.1.905/go.mod h1:C4subxI497OqvGyVcVhiEmrgOYbcKhlFJtRbJnbBaj4=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
