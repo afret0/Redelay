@@ -2,6 +2,8 @@ package exporter
 
 import (
 	"os"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/afret0/wheel/tool"
@@ -42,21 +44,29 @@ func New(svc string) *Exporter {
 }
 
 func (e *Exporter) Counter(name string, helpChain ...string) prometheus.Counter {
+	return e.CounterWith(name, nil, helpChain...)
+}
+
+func (e *Exporter) CounterWith(name string, labels map[string]string, helpChain ...string) prometheus.Counter {
 	help := ""
 	if len(helpChain) != 0 {
 		help = helpChain[0]
 	}
+
+	merged := e.mergeLabels(labels)
+	slotKey := slotKey(name, merged)
+
 	e.mx.Lock()
 	defer e.mx.Unlock()
-	C, ok := e.counterSlot[name]
+	C, ok := e.counterSlot[slotKey]
 	if !ok {
 		C = prometheus.NewCounter(prometheus.CounterOpts{
 			Name:        name,
 			Help:        help,
-			ConstLabels: e.constLabels,
+			ConstLabels: merged,
 		})
 
-		e.counterSlot[name] = C
+		e.counterSlot[slotKey] = C
 
 		prometheus.MustRegister(C)
 	}
@@ -65,27 +75,70 @@ func (e *Exporter) Counter(name string, helpChain ...string) prometheus.Counter 
 }
 
 func (e *Exporter) Gauge(name string, helpChain ...string) prometheus.Gauge {
+	return e.GaugeWith(name, nil, helpChain...)
+}
+
+func (e *Exporter) GaugeWith(name string, labels map[string]string, helpChain ...string) prometheus.Gauge {
 	help := ""
 	if len(helpChain) != 0 {
 		help = helpChain[0]
 	}
+
+	merged := e.mergeLabels(labels)
+	slotKey := slotKey(name, merged)
+
 	e.mx.Lock()
 	defer e.mx.Unlock()
-	G, ok := e.gaugeSlot[name]
+	G, ok := e.gaugeSlot[slotKey]
 
 	if !ok {
 
 		G = prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        name,
 			Help:        help,
-			ConstLabels: e.constLabels,
+			ConstLabels: merged,
 		})
 
-		e.gaugeSlot[name] = G
+		e.gaugeSlot[slotKey] = G
 
 		prometheus.MustRegister(G)
 
 	}
 
 	return G
+}
+
+func (e *Exporter) mergeLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return e.constLabels
+	}
+
+	merged := make(map[string]string, len(e.constLabels)+len(labels))
+	for k, v := range e.constLabels {
+		merged[k] = v
+	}
+	for k, v := range labels {
+		merged[k] = v
+	}
+
+	return merged
+}
+
+func slotKey(name string, labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	sb.WriteString(name)
+	for _, k := range keys {
+		sb.WriteString("|")
+		sb.WriteString(k)
+		sb.WriteString("=")
+		sb.WriteString(labels[k])
+	}
+
+	return sb.String()
 }

@@ -4,6 +4,7 @@ import (
 	"Redelay/exporter"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/afret0/wheel/tool"
@@ -12,7 +13,8 @@ import (
 )
 
 var RetryErr = fmt.Errorf("retry")
-var lg = GetLogger()
+
+//var lg = GetLogger()
 
 //const ExporterBufferQueueLength = "buffer_queue_length"
 
@@ -20,16 +22,18 @@ type Svc struct {
 	redis   redis.UniversalClient
 	svcName string
 	//slot    map[string]func(p string) error
-	//mx      sync.RWMutex
+	mx sync.RWMutex
 
-	key         string
-	unAckKey    string
-	bufferQueue string
+	key string
+
+	unAckBufferQPrefix string
+	bufferQPrefix      string
 
 	lock *redislock.Client
 
 	tickQCount   int64
 	tickInterval int64
+	tickRunTag   int64
 
 	consumeLimit int64
 
@@ -86,7 +90,7 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 	//defer antsPool.Release()
 
 	//lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
-	lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
+	GetLogger().Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
 
 	svr := &Svc{
 		redis:   redis,
@@ -94,9 +98,9 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 		//slot:    make(map[string]func(p string) error),
 		//mx:      sync.RWMutex{},
 
-		key:         fmt.Sprintf("%s:Redelay", svcName),
-		unAckKey:    fmt.Sprintf("%s:Redelay:unAck", svcName),
-		bufferQueue: fmt.Sprintf("%s:Redelay:bufferQueue", svcName),
+		key:                fmt.Sprintf("%s:Redelay", svcName),
+		unAckBufferQPrefix: fmt.Sprintf("%s:Redelay:unAck", svcName),
+		bufferQPrefix:      fmt.Sprintf("%s:Redelay:bufferQueue", svcName),
 
 		lock: redislock.New(redis),
 
@@ -129,25 +133,25 @@ func (s *Svc) Debug() bool {
 
 func (s *Svc) loopFlushExp() {
 
-	lg.Infof("flush exp start...")
+	GetLogger().Infof("flush exp start...")
 	s.exp.Gauge("loop_flush_exp_ping").Set(1)
 
 	defer func() {
 		s.exp.Gauge("loop_flush_exp_ping").Set(0)
-		lg.Infof("loopFlushExp stop...")
+		GetLogger().Infof("loopFlushExp stop...")
 	}()
 
 	ctx := tool.NewCtxBK()
 
 	for _ = range time.Tick(5 * time.Second) {
-		bufferQLen, _ := s.redis.LLen(ctx, s.bufferQueue).Uint64()
+		bufferQLen, _ := s.redis.LLen(ctx, s.bufferQPrefix).Uint64()
 		s.exp.Gauge("buffer_queue_length").Set(float64(bufferQLen))
 
-		unAckQlen, _ := s.redis.ZCard(ctx, s.unAckKey).Uint64()
+		unAckQlen, _ := s.redis.ZCard(ctx, s.unAckBufferQPrefix).Uint64()
 		s.exp.Gauge("unAck_queue_length").Set(float64(unAckQlen))
 
-		ackQlen, _ := s.redis.ZCard(ctx, s.key).Uint64()
-		s.exp.Gauge("ack_queue_length").Set(float64(ackQlen))
+		//ackQlen, _ := s.redis.ZCard(ctx, s.key).Uint64()
+		//s.exp.Gauge("ack_queue_length").Set(float64(ackQlen))
 
 		redisPing, err := s.redis.Ping(ctx).Result()
 		if err != nil {
