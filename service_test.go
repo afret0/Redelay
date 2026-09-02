@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/afret0/wheel/tool"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
@@ -22,7 +23,7 @@ func RegisterPrometheusRouter(E *gin.Engine) {
 }
 
 func EF(args string) error {
-	lg.Infof("args: %v", args)
+	GetLogger().Infof("args: %v", args)
 	//panic("lsakdjlfkajlsd")
 	//time.Sleep(10 * time.Minute)
 	//return nil
@@ -46,16 +47,26 @@ func TestService(t *testing.T) {
 
 	//InitService("test", RC)
 
+	ctx := tool.NewCtxBK()
 	svr1 := NewService("test", RC)
-	for i := 0; i <= 100; i++ {
-		event := fmt.Sprintf("test:event:%d", i)
-		svr1.RegisterEventFunc(event, EF)
+	key := "test-key-1"
 
-		time.Sleep(3 * time.Second)
-		err := svr1.RegisterEvent(event, fmt.Sprintf("%d", i), int64(2))
-		if err != nil {
-			t.Error(err)
+	go svr1.LaunchJob(key, EF)
+
+	for i := 0; i <= 1000; i++ {
+		//msg := fmt.Sprintf("test:event:%d", i)
+		//svr1.RegisterEventFunc(event, EF)
+		msg := &Message[string]{
+			Data: fmt.Sprintf("test:event:%d", i),
 		}
+		svr1.Publish(ctx, key, msg.Marshall())
+
+		time.Sleep(1 * time.Second)
+
+		//err := svr1.RegisterEvent(event, fmt.Sprintf("%d", i), int64(2))
+		//if err != nil {
+		//	t.Error(err)
+		//}
 	}
 
 	time.Sleep(100 * time.Second)

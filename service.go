@@ -2,6 +2,7 @@ package Redelay
 
 import (
 	"Redelay/exporter"
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -21,8 +22,6 @@ var RetryErr = fmt.Errorf("retry")
 type Svc struct {
 	redis   redis.UniversalClient
 	svcName string
-	//slot    map[string]func(p string) error
-	mx sync.RWMutex
 
 	key string
 
@@ -33,7 +32,15 @@ type Svc struct {
 
 	tickQCount   int64
 	tickInterval int64
-	tickRunTag   int64
+
+	// runTag 保证同名后台循环在当前进程内只启动一个.
+	runTag sync.Map
+
+	// jobKeys 记录本进程已 LaunchJob 的 key, 用于队列长度打点.
+	jobKeys sync.Map
+
+	unAckTimeout time.Duration
+	jobTimeout   time.Duration
 
 	consumeLimit int64
 
@@ -76,6 +83,26 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 		consumeLimit = envConsumeLimit
 	}
 
+	unAckTimeout := 3 * time.Minute
+	envUnAckTimeoutS := os.Getenv("DELAYTASK_UNACK_TIMEOUT_SEC")
+	envUnAckTimeout := tool.ConStringToInt64WithoutErr(envUnAckTimeoutS)
+	if envUnAckTimeout != 0 {
+		unAckTimeout = time.Duration(envUnAckTimeout) * time.Second
+	}
+
+	jobTimeout := 60 * time.Second
+	envJobTimeoutS := os.Getenv("DELAYTASK_JOB_TIMEOUT_SEC")
+	envJobTimeout := tool.ConStringToInt64WithoutErr(envJobTimeoutS)
+	if envJobTimeout != 0 {
+		jobTimeout = time.Duration(envJobTimeout) * time.Second
+	}
+
+	// unAck 扫描器必须晚于任务硬超时触发, 否则任务还在跑就会被重投, 造成重复执行.
+	if unAckTimeout <= jobTimeout {
+		unAckTimeout = jobTimeout * 2
+		GetLogger().Warnf("unAckTimeout must be greater than jobTimeout, adjusted to %s", unAckTimeout)
+	}
+
 	//antsPoolSize := 500
 	//envAntsPoolSizeS := os.Getenv("DELAYTASK_ANTS_POOL_SIZE")
 	//envAntsPoolSize := tool.ConStringToInt64WithoutErr(envAntsPoolSizeS)
@@ -89,23 +116,31 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 	//}
 	//defer antsPool.Release()
 
+	// Lua 脚本会同时写延时 ZSET 和 bufferQ/unAck, Redis Cluster 下必须落在同一 slot,
+	// 因此集群模式给三者套上相同的 hash tag. 注意开启后 key 名变化, 已有数据需要迁移.
+	keyPrefix := fmt.Sprintf("%s:Redelay", svcName)
+	if tool.EnvEnabled("DELAYTASK_REDIS_CLUSTER") {
+		keyPrefix = fmt.Sprintf("{%s:Redelay}", svcName)
+	}
+
 	//lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
 	GetLogger().Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
 
 	svr := &Svc{
 		redis:   redis,
 		svcName: svcName,
-		//slot:    make(map[string]func(p string) error),
-		//mx:      sync.RWMutex{},
 
-		key:                fmt.Sprintf("%s:Redelay", svcName),
-		unAckBufferQPrefix: fmt.Sprintf("%s:Redelay:unAck", svcName),
-		bufferQPrefix:      fmt.Sprintf("%s:Redelay:bufferQueue", svcName),
+		key:                keyPrefix,
+		unAckBufferQPrefix: keyPrefix + ":unAck",
+		bufferQPrefix:      keyPrefix + ":bufferQueue",
 
 		lock: redislock.New(redis),
 
 		tickQCount:   count,
 		tickInterval: tickInterval,
+
+		unAckTimeout: unAckTimeout,
+		jobTimeout:   jobTimeout,
 
 		consumeLimit: consumeLimit,
 
@@ -128,10 +163,24 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 }
 
 func (s *Svc) Debug() bool {
-	return tool.EnvEnabled("DELAYTASK_DEBUG")
+	return tool.EnvEnabled("REDELAY_DEBUG")
+}
+
+// tryRun 尝试占用 name 对应的后台循环, 返回 false 说明本进程内已经有一个在跑.
+// 占用成功时返回的 release 用于退出时释放.
+func (s *Svc) tryRun(name string) (release func(), ok bool) {
+	if _, loaded := s.runTag.LoadOrStore(name, struct{}{}); loaded {
+		return nil, false
+	}
+	return func() { s.runTag.Delete(name) }, true
 }
 
 func (s *Svc) loopFlushExp() {
+	release, ok := s.tryRun("loopFlushExp")
+	if !ok {
+		return
+	}
+	defer release()
 
 	GetLogger().Infof("flush exp start...")
 	s.exp.Gauge("loop_flush_exp_ping").Set(1)
@@ -143,15 +192,11 @@ func (s *Svc) loopFlushExp() {
 
 	ctx := tool.NewCtxBK()
 
-	for _ = range time.Tick(5 * time.Second) {
-		bufferQLen, _ := s.redis.LLen(ctx, s.bufferQPrefix).Uint64()
-		s.exp.Gauge("buffer_queue_length").Set(float64(bufferQLen))
+	for range time.Tick(5 * time.Second) {
+		s.flushQueueLenExp(ctx)
 
-		unAckQlen, _ := s.redis.ZCard(ctx, s.unAckBufferQPrefix).Uint64()
-		s.exp.Gauge("unAck_queue_length").Set(float64(unAckQlen))
-
-		//ackQlen, _ := s.redis.ZCard(ctx, s.key).Uint64()
-		//s.exp.Gauge("ack_queue_length").Set(float64(ackQlen))
+		delayQLen, _ := s.redis.ZCard(ctx, s.key).Uint64()
+		s.exp.Gauge("delay_queue_length").Set(float64(delayQLen))
 
 		redisPing, err := s.redis.Ping(ctx).Result()
 		if err != nil {
@@ -161,4 +206,21 @@ func (s *Svc) loopFlushExp() {
 			s.exp.Gauge("redis_ping").Set(1)
 		}
 	}
+}
+
+// flushQueueLenExp 按已 LaunchJob 的 key 打点 bufferQ / unAck 队列长度.
+func (s *Svc) flushQueueLenExp(ctx context.Context) {
+	s.jobKeys.Range(func(k, _ any) bool {
+		key := k.(string)
+		labels := map[string]string{"key": key}
+
+		if n, err := s.redis.LLen(ctx, s.bufferQName(key)).Result(); err == nil {
+			s.exp.GaugeWith("buffer_queue_length", labels).Set(float64(n))
+		}
+		if n, err := s.redis.ZCard(ctx, s.unAckQName(key)).Result(); err == nil {
+			s.exp.GaugeWith("unAck_queue_length", labels).Set(float64(n))
+		}
+
+		return true
+	})
 }

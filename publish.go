@@ -10,7 +10,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func (s *Svc) Publish(ctx context.Context, key string, args string, delay int64) error {
+func (s *Svc) Publish(ctx context.Context, key string, args string) error {
+	return s.publish(ctx, key, args, 0)
+}
+
+func (s *Svc) PublishDelay(ctx context.Context, key string, args string, delay int64) error {
+	return s.publish(ctx, key, args, delay)
+}
+
+func (s *Svc) publish(ctx context.Context, key string, args string, delay int64) error {
 	//ctx := context.Background()
 	//ctx = context.WithValue(ctx, "opId", strings.ReplaceAll(uuid.New().String(), "-", ""))
 
