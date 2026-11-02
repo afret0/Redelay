@@ -78,19 +78,6 @@ func (s *Svc) startTick() {
 		}
 
 		s.tickQ()
-		//err := s.antsPool.Submit(s.tickQ)
-		//if err != nil {
-		//	GetLogger().Errorf("submit tickQ to ants pool failed: %v", err)
-		//	continue
-		//}
-
-		//go s.tickUnAckQ()
-		//err = s.antsPool.Submit(s.tickUnAckQ)
-		//if err != nil {
-		//	GetLogger().Errorf("submit tickUnAckQ to ants pool failed: %v", err)
-		//	continue
-		//}
-
 	}
 
 }

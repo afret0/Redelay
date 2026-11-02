@@ -100,7 +100,7 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 	// unAck 扫描器必须晚于任务硬超时触发, 否则任务还在跑就会被重投, 造成重复执行.
 	if unAckTimeout <= jobTimeout {
 		unAckTimeout = jobTimeout * 2
-		GetLogger().Warnf("unAckTimeout must be greater than jobTimeout, adjusted to %s", unAckTimeout)
+		GetLogger().Infof("unAckTimeout must be greater than jobTimeout, adjusted to %s", unAckTimeout)
 	}
 
 	// Lua 脚本会同时写延时 ZSET 和 bufferQ/unAck, Redis Cluster 下必须落在同一 slot,
