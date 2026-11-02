@@ -90,12 +90,7 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 		unAckTimeout = time.Duration(envUnAckTimeout) * time.Second
 	}
 
-	jobTimeout := 60 * time.Second
-	envJobTimeoutS := os.Getenv("DELAYTASK_JOB_TIMEOUT_SEC")
-	envJobTimeout := tool.ConStringToInt64WithoutErr(envJobTimeoutS)
-	if envJobTimeout != 0 {
-		jobTimeout = time.Duration(envJobTimeout) * time.Second
-	}
+	jobTimeout := jobTimeoutFromEnv()
 
 	// unAck 扫描器必须晚于任务硬超时触发, 否则任务还在跑就会被重投, 造成重复执行.
 	if unAckTimeout <= jobTimeout {
@@ -160,6 +155,19 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 	//go svr.loopFlushExp()
 
 	return svr
+}
+
+// jobTimeoutFromEnv 是单个任务的硬超时, NewService 与 NewJob 共用同一份解析,
+// 保证业务 handler 的 ctx deadline 与 handleEvent 的超时闸门不会两头漂.
+func jobTimeoutFromEnv() time.Duration {
+	jobTimeout := 60 * time.Second
+
+	envJobTimeout := tool.ConStringToInt64WithoutErr(os.Getenv("DELAYTASK_JOB_TIMEOUT_SEC"))
+	if envJobTimeout != 0 {
+		jobTimeout = time.Duration(envJobTimeout) * time.Second
+	}
+
+	return jobTimeout
 }
 
 func (s *Svc) Debug() bool {

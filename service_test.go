@@ -51,7 +51,7 @@ func TestService(t *testing.T) {
 	svr1 := NewService("test", RC)
 	key := "test-key-1"
 
-	go svr1.LaunchJob(key, EF)
+	go svr1.LaunchJob(ctx, key, EF)
 
 	for i := 0; i <= 1000; i++ {
 		//msg := fmt.Sprintf("test:event:%d", i)

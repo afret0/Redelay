@@ -1,11 +1,13 @@
 package exporter
 
 import (
+	"errors"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/afret0/wheel/log"
 	"github.com/afret0/wheel/tool"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -58,6 +60,7 @@ func (e *Exporter) CounterWith(name string, labels map[string]string, helpChain 
 
 	e.mx.Lock()
 	defer e.mx.Unlock()
+
 	C, ok := e.counterSlot[slotKey]
 	if !ok {
 		C = prometheus.NewCounter(prometheus.CounterOpts{
@@ -66,9 +69,24 @@ func (e *Exporter) CounterWith(name string, labels map[string]string, helpChain 
 			ConstLabels: merged,
 		})
 
-		e.counterSlot[slotKey] = C
+		if err := prometheus.Register(C); err != nil {
+			var already prometheus.AlreadyRegisteredError
+			switch {
+			case errors.As(err, &already):
+				// 同进程内同名同 label 的 collector 已注册, 复用它, 两边的打点落到同一条 series,
+				// 而不是让第二个服务构建时 panic.
+				// 注意 *prometheus.gauge 同时实现了 prometheus.Counter(有 Inc/Add), 所以名字被
+				// 另一种类型占用时这里也会复用它, CounterWith 的写入会落到那条 gauge 上:
+				// 同一个 name 不要跨 Counter/Gauge 混用.
+				if existed, castOk := already.ExistingCollector.(prometheus.Counter); castOk {
+					C = existed
+				}
+			default:
+				log.GetLogger().Errorf("register counter failed, name: %s, labels: %+v, err: %s", name, merged, err)
+			}
+		}
 
-		prometheus.MustRegister(C)
+		e.counterSlot[slotKey] = C
 	}
 
 	return C
@@ -89,20 +107,28 @@ func (e *Exporter) GaugeWith(name string, labels map[string]string, helpChain ..
 
 	e.mx.Lock()
 	defer e.mx.Unlock()
+
 	G, ok := e.gaugeSlot[slotKey]
-
 	if !ok {
-
 		G = prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        name,
 			Help:        help,
 			ConstLabels: merged,
 		})
 
+		if err := prometheus.Register(G); err != nil {
+			var already prometheus.AlreadyRegisteredError
+			switch {
+			case errors.As(err, &already):
+				if existed, castOk := already.ExistingCollector.(prometheus.Gauge); castOk {
+					G = existed
+				}
+			default:
+				log.GetLogger().Errorf("register gauge failed, name: %s, labels: %+v, err: %s", name, merged, err)
+			}
+		}
+
 		e.gaugeSlot[slotKey] = G
-
-		prometheus.MustRegister(G)
-
 	}
 
 	return G

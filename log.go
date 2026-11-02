@@ -2,13 +2,19 @@ package Redelay
 
 import (
 	"context"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 )
 
 var logger *logrus.Logger
 
+var loggerMx sync.Mutex
+
 func GetLogger() *logrus.Logger {
+	loggerMx.Lock()
+	defer loggerMx.Unlock()
+
 	if logger != nil {
 		return logger
 	}

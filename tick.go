@@ -17,6 +17,10 @@ import (
 // errDuplicateExec 表示同一条消息正被其他实例执行, 本次跳过.
 var errDuplicateExec = errors.New("duplicate exec")
 
+// errLockFailed 表示取执行锁时 redis 出错(不是被别人持有), 属于基础设施错误, 必须重投,
+// 不能当成业务失败直接 ack, 否则消息被静默丢弃.
+var errLockFailed = errors.New("obtain exec lock failed")
+
 // zremRPushScript 原子地把事件从延时 ZSET(KEYS[1]) 移到 bufferQ(KEYS[2]).
 // ZREM 返回 0 说明已被其他实例取走, 不再重复投递.
 var zremRPushScript = redis.NewScript(`
@@ -39,8 +43,8 @@ return 1
 
 func (s *Svc) startTick() {
 	release, ok := s.tryRun("tickQ")
-	if !ok && s.Debug() {
-		GetLogger().Infof("tick is running, skip")
+	if !ok {
+		GetLogger().Infof("tick loop already running in this process, skip")
 		return
 	}
 	defer release()
@@ -96,7 +100,7 @@ func (s *Svc) tickQ() {
 	now := timeTool.Now().Unix()
 	eventL, err := s.redis.ZRangeByScore(context.Background(), s.key, &redis.ZRangeBy{Min: "-inf", Max: fmt.Sprintf("%d", now), Count: s.tickQCount}).Result()
 	if err != nil {
-		logger.Errorf("get event failed: %v", err)
+		GetLogger().Errorf("get event failed, err: %s", err)
 		return
 	}
 
@@ -109,7 +113,13 @@ func (s *Svc) tickQ() {
 		E := &event{}
 		err = tool.Unmarshal(v, E)
 		if err != nil {
-			GetLogger().Errorf("unmarshal event: %s, failed: %s", v, err)
+			// 脏数据永远解析不出 key, 不清理就会每个 tick 重复失败, 直接摘掉并计数.
+			s.exp.Counter("malformed_event_total").Inc()
+			if rmErr := s.redis.ZRem(ctx, s.key, v).Err(); rmErr != nil {
+				GetLogger().Errorf("drop malformed event failed, event: %s, err: %s", v, rmErr)
+				continue
+			}
+			GetLogger().Errorf("drop malformed event, event: %s, err: %s", v, err)
 			continue
 		}
 
@@ -135,8 +145,8 @@ func (s *Svc) unAckQName(key string) string {
 // (消费者崩溃/被 k8s 驱逐导致) 重新投递回延时 ZSET.
 func (s *Svc) startTickUnAckQ(key string) {
 	release, ok := s.tryRun("tickUnAckQ:" + key)
-	if !ok && s.Debug() {
-		GetLogger().Infof("tickUnAckQ is running, skip, key: %s", key)
+	if !ok {
+		GetLogger().Infof("tickUnAckQ loop already running in this process, skip, key: %s", key)
 		return
 	}
 	defer release()
@@ -188,7 +198,13 @@ func (s *Svc) tickUnAckQ(key string) {
 
 		e := new(event)
 		if err := json.Unmarshal([]byte(v), e); err != nil {
-			GetLogger().Errorf("unmarshal event: %s, failed: %s", v, err)
+			// unAck 里的脏数据同样解析不出内容, 不清理就会被扫描器无限重复处理.
+			s.exp.CounterWith("malformed_unAck_event_total", map[string]string{"key": key}).Inc()
+			if rmErr := s.redis.ZRem(ctx, unAckQ, v).Err(); rmErr != nil {
+				GetLogger().Errorf("drop malformed unAck event failed, key: %s, event: %s, err: %s", key, v, rmErr)
+				continue
+			}
+			GetLogger().Errorf("drop malformed unAck event, key: %s, event: %s, err: %s", key, v, err)
 			continue
 		}
 
@@ -252,7 +268,7 @@ func (s *Svc) handleEvent(ctx context.Context, eventS string, f func(p string) e
 			return
 		}
 
-		if errors.Is(err, RetryErr) {
+		if errors.Is(err, RetryErr) || errors.Is(err, errLockFailed) {
 			if e.RetryCount >= 3 {
 				s.redis.ZRem(ctx, unAckQ, eventS)
 				GetLogger().Errorf("event: %s retry 3 times, discard", e.Id)
@@ -322,7 +338,7 @@ func (s *Svc) runEvent(ctx context.Context, eventS string, f func(p string) erro
 			return errDuplicateExec
 		}
 		GetLogger().Errorf("obtain lock failed, 不执行, err: %s", err)
-		return err
+		return fmt.Errorf("%w: %s", errLockFailed, err)
 	}
 	// 必须释放, 否则 Id 相同的重试消息会被自己上一轮的锁挡住.
 	defer func() { _ = lk.Release(ctx) }()

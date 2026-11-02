@@ -3,6 +3,7 @@ package Redelay
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/afret0/wheel/log"
@@ -27,8 +28,10 @@ return v
 type Job func(p string) error
 
 func NewJob[T any](f func(ctx context.Context, p T) error) Job {
+	timeout := jobTimeoutFromEnv()
+
 	return func(msgS string) error {
-		c1, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		c1, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		lg1 := log.CtxLogger(c1).WithFields(logrus.Fields{})
 		if tool.Debug() {
@@ -62,7 +65,7 @@ func NewJob[T any](f func(ctx context.Context, p T) error) Job {
 	}
 }
 
-func (s *Svc) LaunchJob(key string, f Job) error {
+func (s *Svc) LaunchJob(ctx context.Context, key string, f Job) {
 
 	s.jobKeys.Store(key, struct{}{})
 
@@ -79,16 +82,26 @@ func (s *Svc) LaunchJob(key string, f Job) error {
 	}()
 
 	log.GetLogger().Infof("consume start...")
-	ctx := tool.NewCtxBK()
 	lg := log.CtxLogger(ctx).WithFields(logrus.Fields{"key": key})
+
+	// drain: ctx 取消后只停止认领新事件, 等在飞的 handler 自然跑完再返回.
+	// 在飞任务必须用脱离取消的 ctx, 否则它的 ack 会因 context canceled 失败,
+	// 事件留在 unAck 被扫描器重投, 同一条业务被执行两次.
+	var inFlight sync.WaitGroup
 
 	limiter := rate.NewLimiter(rate.Limit(s.consumeLimit), int(s.consumeLimit*2))
 
 	idle := time.Duration(s.tickInterval) * time.Millisecond
 
+consumeLoop:
 	for {
 		// 先限流再认领, 避免消息被摘到 unAck 后长时间排队, 被扫描器误判为超时重投.
+		// ctx 取消后 limiter.Wait 会立刻返回错误, 这里必须先判取消再退出, 否则空转刷日志.
 		if err := limiter.Wait(ctx); err != nil {
+			if ctx.Err() != nil {
+				lg.Infof("done, limiter wait canceled, consume loop exit, err: %s", ctx.Err())
+				break consumeLoop
+			}
 			lg.Errorf("rate limit wait failed: %s", err)
 			continue
 		}
@@ -98,18 +111,26 @@ func (s *Svc) LaunchJob(key string, f Job) error {
 			timeTool.Now().Unix(),
 		).Text()
 		if err != nil {
+			if ctx.Err() != nil {
+				lg.Infof("done, claim canceled, consume loop exit, err: %s", ctx.Err())
+				break consumeLoop
+			}
+
 			if errors.Is(err, redis.Nil) {
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					lg.Infof("done, idle wait canceled, consume loop exit, err: %s", ctx.Err())
+					break consumeLoop
 				case <-time.After(idle):
 				}
 				continue
 			}
-			lg.Errorf("get event failed: %s", err)
+
+			lg.Errorf("fail, get event failed, err: %s", err)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				lg.Infof("done, claim failed then canceled, consume loop exit, err: %s", ctx.Err())
+				break consumeLoop
 			case <-time.After(idle):
 			}
 			continue
@@ -117,14 +138,13 @@ func (s *Svc) LaunchJob(key string, f Job) error {
 
 		s.exp.CounterWith("consume_total", jobLabels).Inc()
 
-		go s.handleEvent(ctx, eventS, f)
-		//err = s.antsPool.Submit(func() {
-		//	s.handleEvent(ctx, eventSL[1])
-		//})
-		//if err != nil {
-		//	lg.Errorf("submit handleEvent to ants pool failed: %s", err)
-		//}
-
+		inFlight.Add(1)
+		go func(eventS string) {
+			defer inFlight.Done()
+			s.handleEvent(tool.DetachCtx(ctx, tool.OpId(ctx)), eventS, f)
+		}(eventS)
 	}
 
+	inFlight.Wait()
+	lg.Infof("done, in-flight drained, consume loop exit")
 }
