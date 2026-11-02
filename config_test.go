@@ -72,6 +72,7 @@ func TestNewService_Defaults(t *testing.T) {
 	t.Setenv("DELAYTASK_TICK_COUNT", "")
 	t.Setenv("DELAYTASK_TICK_INTERVAL_MS", "")
 	t.Setenv("DELAYTASK_CONSUME_LIMIT", "")
+	t.Setenv("DELAYTASK_CONCURRENCY", "")
 	t.Setenv("DELAYTASK_UNACK_TIMEOUT_SEC", "")
 	t.Setenv("DELAYTASK_JOB_TIMEOUT_SEC", "")
 	t.Setenv("DELAYTASK_REDIS_CLUSTER", "")
@@ -99,6 +100,15 @@ func TestNewService_Defaults(t *testing.T) {
 	if s.consumeLimit != 2500 {
 		t.Fatalf("consumeLimit expected 2500(count*5), got: %d", s.consumeLimit)
 	}
+	if s.concurrency != 500 {
+		t.Fatalf("concurrency expected 500, got: %d", s.concurrency)
+	}
+	if cap(s.slots) != int(s.concurrency) {
+		t.Fatalf("slot pool capacity expected %d, got: %d", s.concurrency, cap(s.slots))
+	}
+	if len(s.slots) != 0 {
+		t.Fatalf("slot pool should start empty, got: %d", len(s.slots))
+	}
 	if s.unAckTimeout != 3*time.Minute {
 		t.Fatalf("unAckTimeout expected 3m, got: %s", s.unAckTimeout)
 	}
@@ -121,6 +131,40 @@ func TestNewService_Defaults(t *testing.T) {
 	if got := itMetric(t, s.svcName, "consume_limit", nil); got != 2500 {
 		t.Fatalf("gauge consume_limit expected 2500, got: %+v", got)
 	}
+	if got := itMetric(t, s.svcName, "concurrency_limit", nil); got != 500 {
+		t.Fatalf("gauge concurrency_limit expected 500, got: %+v", got)
+	}
+}
+
+func TestConcurrencyLimitFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		want int64
+	}{
+		{"unset", "", 500},
+		{"value", "7", 7},
+		{"invalidKeepsDefault", "abc", 500},
+		{"zeroKeepsDefault", "0", 500},
+		{"negativeKeepsDefault", "-5", 500},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("DELAYTASK_CONCURRENCY", c.env)
+
+			if got := concurrencyLimitFromEnv(); got != c.want {
+				t.Fatalf("concurrencyLimitFromEnv with %q expected %d, got %d", c.env, c.want, got)
+			}
+
+			t.Setenv("HOSTNAME", "")
+			s := NewService(itSvcName(t)+"-"+c.name, offlineRedis())
+			if s.concurrency != c.want || cap(s.slots) != int(c.want) {
+				t.Fatalf("Svc concurrency expected %d with slot capacity %d, got %d with %d",
+					c.want, c.want, s.concurrency, cap(s.slots))
+			}
+		})
+	}
 }
 
 func TestNewService_EnvOverrides(t *testing.T) {
@@ -128,6 +172,7 @@ func TestNewService_EnvOverrides(t *testing.T) {
 	t.Setenv("DELAYTASK_TICK_COUNT", "120")
 	t.Setenv("DELAYTASK_TICK_INTERVAL_MS", "250")
 	t.Setenv("DELAYTASK_CONSUME_LIMIT", "900")
+	t.Setenv("DELAYTASK_CONCURRENCY", "3")
 	t.Setenv("DELAYTASK_JOB_TIMEOUT_SEC", "20")
 	t.Setenv("DELAYTASK_UNACK_TIMEOUT_SEC", "100")
 
@@ -142,6 +187,9 @@ func TestNewService_EnvOverrides(t *testing.T) {
 	if s.consumeLimit != 900 {
 		t.Fatalf("consumeLimit expected 900, got: %d", s.consumeLimit)
 	}
+	if s.concurrency != 3 || cap(s.slots) != 3 {
+		t.Fatalf("concurrency expected 3 with a 3 slot pool, got %d with %d", s.concurrency, cap(s.slots))
+	}
 	if s.jobTimeout != 20*time.Second {
 		t.Fatalf("jobTimeout expected 20s, got: %s", s.jobTimeout)
 	}
@@ -155,6 +203,7 @@ func TestNewService_InvalidEnvKeepsDefault(t *testing.T) {
 	t.Setenv("DELAYTASK_TICK_COUNT", "not-a-number")
 	t.Setenv("DELAYTASK_TICK_INTERVAL_MS", "")
 	t.Setenv("DELAYTASK_CONSUME_LIMIT", "abc")
+	t.Setenv("DELAYTASK_CONCURRENCY", "not-a-number")
 	t.Setenv("DELAYTASK_JOB_TIMEOUT_SEC", "xx")
 	t.Setenv("DELAYTASK_UNACK_TIMEOUT_SEC", "yy")
 	t.Setenv("DELAYTASK_REDIS_CLUSTER", "")
@@ -163,6 +212,9 @@ func TestNewService_InvalidEnvKeepsDefault(t *testing.T) {
 
 	if s.tickQCount != 500 || s.tickInterval != 500 || s.consumeLimit != 2500 {
 		t.Fatalf("defaults not kept, got count: %d, interval: %d, limit: %d", s.tickQCount, s.tickInterval, s.consumeLimit)
+	}
+	if s.concurrency != 500 {
+		t.Fatalf("concurrency default not kept, got: %d", s.concurrency)
 	}
 	if s.jobTimeout != 60*time.Second || s.unAckTimeout != 3*time.Minute {
 		t.Fatalf("timeout defaults not kept, jobTimeout: %s, unAckTimeout: %s", s.jobTimeout, s.unAckTimeout)
@@ -403,6 +455,7 @@ func TestNewService_SameSvcNameReusesCollectors(t *testing.T) {
 func TestEnvSnapshot(t *testing.T) {
 	keys := []string{
 		"DELAYTASK_TICK_COUNT", "DELAYTASK_TICK_INTERVAL_MS", "DELAYTASK_CONSUME_LIMIT",
+		"DELAYTASK_CONCURRENCY",
 		"DELAYTASK_UNACK_TIMEOUT_SEC", "DELAYTASK_JOB_TIMEOUT_SEC", "DELAYTASK_REDIS_CLUSTER",
 		"REDELAY_DEBUG", "HOSTNAME",
 	}

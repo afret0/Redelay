@@ -106,10 +106,8 @@ consumeLoop:
 			continue
 		}
 
-		eventS, err := lpopZAddUnAckScript.Run(ctx, s.redis,
-			[]string{s.bufferQName(key), s.unAckQName(key)},
-			timeTool.Now().Unix(),
-		).Text()
+		// 先拿并发配额再认领: 满了就阻塞在这里, 事件不会被摘到 unAck 里空等.
+		eventS, err := s.claimEvent(ctx, key)
 		if err != nil {
 			if ctx.Err() != nil {
 				lg.Infof("done, claim canceled, consume loop exit, err: %s", ctx.Err())
@@ -141,10 +139,32 @@ consumeLoop:
 		inFlight.Add(1)
 		go func(eventS string) {
 			defer inFlight.Done()
+			defer func() { <-s.slots }()
 			s.handleEvent(tool.DetachCtx(ctx, tool.OpId(ctx)), eventS, f)
 		}(eventS)
 	}
 
 	inFlight.Wait()
 	lg.Infof("done, in-flight drained, consume loop exit")
+}
+
+// claimEvent 占一个并发配额后原子认领队头事件, 认领失败立即归还配额,
+// 成功则把配额交给调用方, 由 handler goroutine 结束时归还.
+func (s *Svc) claimEvent(ctx context.Context, key string) (string, error) {
+	select {
+	case s.slots <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
+	eventS, err := lpopZAddUnAckScript.Run(ctx, s.redis,
+		[]string{s.bufferQName(key), s.unAckQName(key)},
+		timeTool.Now().Unix(),
+	).Text()
+	if err != nil {
+		<-s.slots
+		return "", err
+	}
+
+	return eventS, nil
 }

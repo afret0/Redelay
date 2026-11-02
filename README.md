@@ -89,6 +89,7 @@ and you get two deliveries: `msgId` keeps them apart.
 | `DELAYTASK_TICK_COUNT` | `500` | events per tick, also the per-scan cap of the unAck scanner |
 | `DELAYTASK_TICK_INTERVAL_MS` | `500` | ticker period, and the consumer idle poll interval |
 | `DELAYTASK_CONSUME_LIMIT` | `tickCount * 5` | consumer rate limit per second, burst is twice that |
+| `DELAYTASK_CONCURRENCY` | `500` | handlers running at once across the whole `Svc`, 0 and invalid values fall back to the default |
 | `DELAYTASK_JOB_TIMEOUT_SEC` | `60` | hard timeout of a single handler run, the event lock ttl, the drain bound at shutdown, and the deadline of the ctx `NewJob` hands to your handler |
 | `DELAYTASK_UNACK_TIMEOUT_SEC` | `180` | how long an event may sit unacked; forced to `jobTimeout * 2` if not greater |
 | `DELAYTASK_REDIS_CLUSTER` | unset | adds a `{svcName:Redelay}` hash tag so the scripts stay in one slot |
@@ -96,6 +97,11 @@ and you get two deliveries: `msgId` keeps them apart.
 
 `DELAYTASK_REDIS_CLUSTER` changes the key names, so existing data is not picked up
 after switching it on.
+
+Concurrency is capped per `Svc`, not per key: a handler takes a slot before its event is
+claimed, so a full pool blocks claiming and the events wait in `bufferQueue` instead of
+sitting in `unAck` where the scanner would consider them timed out. Cancelling the ctx
+also unblocks a consumer that is waiting for a slot.
 
 ## keys
 
@@ -122,7 +128,7 @@ job_failed_total{key}  job_timeout_total{key}  duplicate_exec_total{key}
 malformed_event_total  malformed_unAck_event_total{key}
 delay_queue_length  buffer_queue_length{key}  unAck_queue_length{key}
 redis_ping  tick_ping  tick_unack_ping{key}  consume_ping{key}  loop_flush_exp_ping
-tick_count  tick_interval_ms  consume_limit
+tick_count  tick_interval_ms  consume_limit  concurrency_limit
 ```
 
 Serve them yourself:

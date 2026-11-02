@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"time"
 
+	"github.com/afret0/wheel/tool/timeTool"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -47,7 +47,7 @@ func (s *Svc) publish(ctx context.Context, key string, args string, delay int64)
 		return err
 	}
 
-	score := time.Now().Unix() + delay
+	score := timeTool.Now().Unix() + delay
 	err = s.redis.ZAdd(ctx, s.key, redis.Z{Score: float64(score), Member: string(EB)}).Err()
 	if err != nil {
 		lg.WithError(err).Error("publish event failed")

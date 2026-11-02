@@ -282,7 +282,7 @@ func (s *Svc) handleEvent(ctx context.Context, eventS string, f func(p string) e
 				return
 			}
 
-			if err := s.requeue(ctx, unAckQ, eventS, string(eB), time.Now().Unix()+3*e.RetryCount); err != nil {
+			if err := s.requeue(ctx, unAckQ, eventS, string(eB), timeTool.Now().Unix()+3*e.RetryCount); err != nil {
 				GetLogger().Errorf("retry event failed: %v", err)
 			}
 			return

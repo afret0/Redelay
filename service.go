@@ -44,9 +44,12 @@ type Svc struct {
 
 	consumeLimit int64
 
-	exp *exporter.Exporter
+	// concurrency 是整个 Svc 在飞 handler 的硬上限, slots 是它的配额池.
+	// 配额在认领之前获取, 满了就阻塞认领循环, 事件留在 bufferQ 而不是躺在 unAck 里被误判超时重投.
+	concurrency int64
+	slots       chan struct{}
 
-	//antsPool *ants.Pool
+	exp *exporter.Exporter
 }
 
 type event struct {
@@ -90,6 +93,8 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 		unAckTimeout = time.Duration(envUnAckTimeout) * time.Second
 	}
 
+	concurrency := concurrencyLimitFromEnv()
+
 	jobTimeout := jobTimeoutFromEnv()
 
 	// unAck 扫描器必须晚于任务硬超时触发, 否则任务还在跑就会被重投, 造成重复执行.
@@ -98,19 +103,6 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 		GetLogger().Warnf("unAckTimeout must be greater than jobTimeout, adjusted to %s", unAckTimeout)
 	}
 
-	//antsPoolSize := 500
-	//envAntsPoolSizeS := os.Getenv("DELAYTASK_ANTS_POOL_SIZE")
-	//envAntsPoolSize := tool.ConStringToInt64WithoutErr(envAntsPoolSizeS)
-	//if envAntsPoolSize != 0 {
-	//	antsPoolSize = int(envAntsPoolSize)
-	//}
-	//
-	//antsPool, err := ants.NewPool(antsPoolSize)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//defer antsPool.Release()
-
 	// Lua 脚本会同时写延时 ZSET 和 bufferQ/unAck, Redis Cluster 下必须落在同一 slot,
 	// 因此集群模式给三者套上相同的 hash tag. 注意开启后 key 名变化, 已有数据需要迁移.
 	keyPrefix := fmt.Sprintf("%s:Redelay", svcName)
@@ -118,8 +110,7 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 		keyPrefix = fmt.Sprintf("{%s:Redelay}", svcName)
 	}
 
-	//lg.Infof("count: %d, tickInterval: %d, consumeLimit: %d, antsPoolSize: %d", count, tickInterval, consumeLimit, antsPoolSize)
-	GetLogger().Infof("count: %d, tickInterval: %d, consumeLimit: %d", count, tickInterval, consumeLimit)
+	GetLogger().Infof("count: %d, tickInterval: %d, consumeLimit: %d, concurrency: %d", count, tickInterval, consumeLimit, concurrency)
 
 	svr := &Svc{
 		redis:   redis,
@@ -139,15 +130,16 @@ func NewService(svcName string, redis redis.UniversalClient) *Svc {
 
 		consumeLimit: consumeLimit,
 
-		exp: exporter.New(svcName),
+		concurrency: concurrency,
+		slots:       make(chan struct{}, concurrency),
 
-		//antsPool: antsPool,
+		exp: exporter.New(svcName),
 	}
 
 	svr.exp.Gauge("tick_count").Set(float64(svr.tickQCount))
 	svr.exp.Gauge("tick_interval_ms").Set(float64(svr.tickInterval))
 	svr.exp.Gauge("consume_limit").Set(float64(svr.consumeLimit))
-	//svr.exp.Gauge("ants_pool_size").Set(float64(antsPoolSize))
+	svr.exp.Gauge("concurrency_limit").Set(float64(svr.concurrency))
 
 	//go svr.startTick()
 	//go svr.startConsume()
@@ -168,6 +160,18 @@ func jobTimeoutFromEnv() time.Duration {
 	}
 
 	return jobTimeout
+}
+
+// concurrencyLimitFromEnv 是整个 Svc 在飞 handler 的数量上限, 0 或非法值一律回退默认.
+func concurrencyLimitFromEnv() int64 {
+	concurrency := int64(500)
+
+	envConcurrency := tool.ConStringToInt64WithoutErr(os.Getenv("DELAYTASK_CONCURRENCY"))
+	if envConcurrency > 0 {
+		concurrency = envConcurrency
+	}
+
+	return concurrency
 }
 
 func (s *Svc) Debug() bool {

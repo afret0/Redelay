@@ -105,6 +105,7 @@ func itEnv(t *testing.T, overrides ...string) {
 	t.Setenv("DELAYTASK_TICK_INTERVAL_MS", "50")
 	t.Setenv("DELAYTASK_TICK_COUNT", "100")
 	t.Setenv("DELAYTASK_CONSUME_LIMIT", "5000")
+	t.Setenv("DELAYTASK_CONCURRENCY", "")
 	t.Setenv("DELAYTASK_REDIS_CLUSTER", "")
 	t.Setenv("REDELAY_DEBUG", "")
 
